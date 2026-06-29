@@ -22,9 +22,15 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^(#{6}) .+"), HEADING_STYLES[6]),
     # 인용문
     (re.compile(r"^> .+"), "italic dim bright_green"),
-    # 체크박스
+    # 체크박스 (순서상 unordered list 보다 먼저 매칭되어야 함)
     (re.compile(r"^- \[x\]"), "bold bright_green"),
     (re.compile(r"^- \[ \]"), "dim"),
+    # 순서 없는 목록: - 또는 * 로 시작 (체크박스 제외)
+    (re.compile(r"^[-*] (?!\[)"), "bright_white"),
+    # 순서 있는 목록: 숫자. 로 시작
+    (re.compile(r"^\d+\. "), "bright_white"),
+    # 표: | 로 시작하고 | 로 끝남
+    (re.compile(r"^\|.+\|"), "bright_yellow"),
     # 수평선
     (re.compile(r"^[-*_]{3,}$"), "dim"),
 ]
@@ -38,6 +44,8 @@ _INLINE_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"~~.+?~~"), "strike"),
     # 인라인 코드: `code`
     (re.compile(r"`[^`]+`"), "bold on grey11"),
+    # 각주: [^ref] (링크 패턴보다 먼저 매칭)
+    (re.compile(r"\[\^[^\]]+\]"), "dim"),
     # 링크: [text](url)
     (re.compile(r"\[.+?\]\(.+?\)"), "bright_blue underline"),
 ]
