@@ -25,8 +25,8 @@ async def test_app_opens_file(tmp_path):
 async def test_ctrl_q_exits():
     async with TmdApp().run_test(size=(120, 40)) as pilot:
         await pilot.press("ctrl+q")
-        # app should have exited or be in exiting state
-        assert not pilot.app._running or True  # exited or already done
+        # app should have exited after ctrl+q
+        assert not pilot.app.is_running
 
 
 @pytest.mark.asyncio
