@@ -43,6 +43,7 @@ class TmdApp(App):
         ("tab", "focus_next", "Next focus"),
         ("ctrl+backslash", "toggle_sidebar", "Toggle sidebar"),
         ("ctrl+n", "new_file", "New file"),
+        ("ctrl+o", "open_file_dialog", "파일 열기"),
         ("f1", "show_help", "Help"),
     ]
 
@@ -94,6 +95,27 @@ class TmdApp(App):
         editor.load_text("")
         editor.current_path = None
         self.query_one(StatusBar).set_idle()
+
+    def action_open_file_dialog(self) -> None:
+        from textual.widgets import Input
+        from textual.screen import ModalScreen
+
+        class OpenDialog(ModalScreen):
+            CSS = "OpenDialog { align: center middle; } Input { width: 60; }"
+
+            def compose(self) -> ComposeResult:
+                yield Input(placeholder="파일 경로 입력 후 Enter...")
+
+            def on_input_submitted(self, event: Input.Submitted) -> None:
+                self.dismiss(event.value)
+
+        def open_path(path: str | None) -> None:
+            if path:
+                p = Path(path).expanduser()
+                if p.is_file():
+                    self.query_one(MarkdownEditor).open_file(str(p.resolve()))
+
+        self.push_screen(OpenDialog(), open_path)
 
     def action_show_help(self) -> None:
         self.notify(

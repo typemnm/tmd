@@ -10,7 +10,6 @@ from textual.widgets import TextArea
 from textual.widgets.text_area import TextAreaTheme
 
 from tmd.history import add_to_history
-from tmd.markdown import annotate_line, LineStyle  # noqa: F401 — consumed by this module
 
 _AUTOSAVE_DELAY = 2.0  # seconds
 
