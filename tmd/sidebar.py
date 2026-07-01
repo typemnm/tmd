@@ -17,18 +17,18 @@ class Sidebar(Widget):
     DEFAULT_CSS = """
     Sidebar {
         width: 30%;
-        border-right: solid grey30;
+        border-right: solid #4e4e4e;
     }
     Sidebar Label {
         padding: 0 1;
-        background: grey15;
-        color: bright_cyan;
+        background: #262626;
+        color: ansi_bright_cyan;
         text-style: bold;
     }
     Sidebar ListView {
         height: auto;
         max-height: 10;
-        border-bottom: solid grey30;
+        border-bottom: solid #4e4e4e;
     }
     """
 
@@ -46,21 +46,25 @@ class Sidebar(Widget):
         yield Label("파일 탐색기")
         yield DirectoryTree(self._root, id="dir-tree")
 
-    def on_mount(self) -> None:
-        self.refresh_history()
+    async def on_mount(self) -> None:
+        self._history_paths: list[str] = []
+        await self.refresh_history()
 
-    def refresh_history(self) -> None:
+    async def refresh_history(self) -> None:
         lv = self.query_one("#recent-list", ListView)
-        lv.clear()
+        await lv.clear()
+        self._history_paths = []
         for entry in get_history():
             p = entry["path"]
-            lv.append(ListItem(Static(Path(p).name), id=f"hist-{p}"))
+            self._history_paths.append(p)
+            lv.append(ListItem(Static(Path(p).name)))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        item_id = event.item.id or ""
-        if item_id.startswith("hist-"):
-            path = item_id[len("hist-"):]
-            self.post_message(self.FileSelected(path=path))
+        if event.list_view.id != "recent-list":
+            return
+        idx = event.index
+        if 0 <= idx < len(self._history_paths):
+            self.post_message(self.FileSelected(path=self._history_paths[idx]))
 
     def on_directory_tree_file_selected(
         self, event: DirectoryTree.FileSelected
