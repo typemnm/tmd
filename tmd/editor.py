@@ -10,8 +10,15 @@ from textual.widgets import TextArea
 from textual.widgets.text_area import TextAreaTheme
 
 from tmd.history import add_to_history
+from tmd.markdown import annotate_line, _PATTERNS, _INLINE_PATTERNS
 
 _AUTOSAVE_DELAY = 2.0  # seconds
+
+# Build a mapping from style string → Rich Style for all markdown tokens.
+_MD_SYNTAX_STYLES: dict[str, Style] = {
+    style_str: Style.parse(style_str)
+    for _, style_str in _PATTERNS + _INLINE_PATTERNS
+}
 
 
 def _make_theme() -> TextAreaTheme:
@@ -23,6 +30,7 @@ def _make_theme() -> TextAreaTheme:
         cursor_line_style=Style(bgcolor="grey15"),
         bracket_matching_style=Style(bgcolor="grey30"),
         selection_style=Style(bgcolor="grey30"),
+        syntax_styles=dict(_MD_SYNTAX_STYLES),
     )
 
 
@@ -47,7 +55,7 @@ class MarkdownEditor(TextArea):
         super().__init__("", show_line_numbers=True, **kwargs)
         self.current_path: str | None = None
         self._autosave_timer: Timer | None = None
-        self._loading: bool = False
+        self._saved_text: str = ""  # text at last save/open
 
     def on_mount(self) -> None:
         self.register_theme(_make_theme())
@@ -64,29 +72,37 @@ class MarkdownEditor(TextArea):
 
     def open_file(self, path: str) -> None:
         """Load *path* into the editor and record it in history."""
-        self._loading = True
-        try:
-            content = Path(path).read_text(encoding="utf-8")
-            self.load_text(content)
-            self.current_path = path
-            add_to_history(path)
-        finally:
-            self._loading = False
+        content = Path(path).read_text(encoding="utf-8")
+        self.load_text(content)
+        self.current_path = path
+        self._saved_text = content
+        add_to_history(path)
 
     def save_file(self) -> None:
         """Write the current buffer to *current_path*."""
         if self.current_path is None:
             return
         Path(self.current_path).write_text(self.text, encoding="utf-8")
+        self._saved_text = self.text
         self.post_message(self.Saved(path=self.current_path))
 
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
 
+    def _build_highlight_map(self) -> None:
+        """Override to inject annotate_line spans into the highlight map."""
+        self._line_cache.clear()
+        self._highlights.clear()
+        lines = self.text.split("\n")
+        for i, line in enumerate(lines):
+            spans = annotate_line(line)
+            for start, end, style_str in spans:
+                self._highlights[i].append((start, end, style_str))
+
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if self._loading:
-            return
+        if self.text == self._saved_text:
+            return  # ignore spurious change on load or after save
         self.post_message(self.Modified())
         self._schedule_autosave()
 

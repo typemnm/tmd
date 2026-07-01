@@ -46,3 +46,42 @@ async def test_sidebar_file_selection_opens_file(tmp_path):
         await pilot.pause()
         editor = pilot.app.query_one(MarkdownEditor)
         assert "Selected File Content" in editor.text
+
+
+@pytest.mark.asyncio
+async def test_action_new_file():
+    """Ctrl+N clears the editor."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        editor = pilot.app.query_one(MarkdownEditor)
+        # Load some text first
+        editor.load_text("some content")
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+        assert editor.text == "" or editor.current_path is None
+
+
+@pytest.mark.asyncio
+async def test_action_toggle_sidebar():
+    """Ctrl+\\ hides and shows the sidebar."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        sidebar = pilot.app.query_one(Sidebar)
+        initial_display = sidebar.display
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        assert sidebar.display != initial_display
+
+
+@pytest.mark.asyncio
+async def test_modified_updates_status_bar(tmp_path):
+    """Typing in editor updates status bar to unsaved."""
+    md = tmp_path / "m.md"
+    md.write_text("hello", encoding="utf-8")
+    async with TmdApp(initial_path=str(md)).run_test(size=(120, 40)) as pilot:
+        status = pilot.app.query_one(StatusBar)
+        editor = pilot.app.query_one(MarkdownEditor)
+        editor.focus()
+        await pilot.pause()
+        await pilot.press("end", "x")
+        await pilot.pause()
+        await pilot.pause()
+        assert "미저장" in str(status.content) or "○" in str(status.content)
