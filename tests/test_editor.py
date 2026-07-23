@@ -1,7 +1,8 @@
+
 import pytest
-from pathlib import Path
 from textual.app import App, ComposeResult
-from tmd.editor import MarkdownEditor
+
+from tmd_cli.editor import MarkdownEditor
 
 
 class EditorApp(App):

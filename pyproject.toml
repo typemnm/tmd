@@ -3,18 +3,70 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "tmd"
-version = "0.1.0"
+name = "tmd-cli"
+dynamic = ["version"]
+description = "A keyboard-first terminal Markdown editor"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "typemnm" }]
+keywords = ["markdown", "editor", "terminal", "tui", "textual"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Editors",
+]
 dependencies = [
-    "textual>=0.85",
-    "markdown-it-py>=3.0",
-    "mdit-py-plugins>=0.4",
+    "textual>=8.2,<9",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "build>=1.2,<2",
+    "pytest>=9,<10",
+    "pytest-asyncio>=1.4,<2",
+    "ruff>=0.12,<1",
+    "twine>=6,<7",
+]
+
+[project.urls]
+Homepage = "https://github.com/typemnm/tmd"
+Repository = "https://github.com/typemnm/tmd"
+Issues = "https://github.com/typemnm/tmd/issues"
+Changelog = "https://github.com/typemnm/tmd/releases"
+
 [project.scripts]
-tmd = "tmd.app:main"
+tmd = "tmd_cli.app:main"
+
+[tool.hatch.version]
+path = "tmd_cli/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tmd_cli"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.claude",
+    "/.omc",
+    "/.omx",
+    "/.superpowers",
+    "/docs/superpowers",
+    "/venv",
+]

@@ -1,1 +1,1 @@
-"""Tests for tmd."""
+"""Tests for tmd_cli."""

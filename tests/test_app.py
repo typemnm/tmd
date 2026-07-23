@@ -1,9 +1,9 @@
-import pytest
-from pathlib import Path
 
-from tmd.app import TmdApp, StatusBar
-from tmd.editor import MarkdownEditor
-from tmd.sidebar import Sidebar
+import pytest
+
+from tmd_cli.app import StatusBar, TmdApp
+from tmd_cli.editor import MarkdownEditor
+from tmd_cli.sidebar import Sidebar
 
 
 @pytest.mark.asyncio

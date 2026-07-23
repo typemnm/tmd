@@ -1,5 +1,4 @@
-from tmd.markdown import annotate_line
-
+from tmd_cli.markdown import annotate_line
 
 # ── Headings ──────────────────────────────────────────────────────────────────
 
