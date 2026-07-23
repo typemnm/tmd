@@ -50,7 +50,7 @@ jobs:
           python -m venv /tmp/tmd-smoke
           /tmp/tmd-smoke/bin/pip install dist/*.whl
           /tmp/tmd-smoke/bin/tmd --version
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
