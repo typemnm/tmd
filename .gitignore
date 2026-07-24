@@ -12,3 +12,6 @@ build/
 *.egg-info/
 .omx/
 .omc/
+.claude/
+.superpowers/
+docs/superpowers/

@@ -67,6 +67,5 @@ exclude = [
     "/.omc",
     "/.omx",
     "/.superpowers",
-    "/docs/superpowers",
     "/venv",
 ]
