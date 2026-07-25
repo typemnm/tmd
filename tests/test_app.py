@@ -140,7 +140,7 @@ async def test_preview_stops_on_unmount(monkeypatch, tmp_path):
         await pilot.pause()
         server = pilot.app._preview
         assert server is not None
-        port = server.last_port  # capture before unmount stops the server
+        port = server.port  # capture before unmount stops the server
 
     # After the app context exits, App.on_unmount must have stopped the server.
     with pytest.raises(OSError):

@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from markdown_it import MarkdownIt
 from mdit_py_plugins.tasklists import tasklists_plugin
 
-_md = MarkdownIt("gfm-like").use(tasklists_plugin)
+_md = MarkdownIt("gfm-like", {"html": False}).use(tasklists_plugin)
 
 PAGE_CSS = """
 :root { color-scheme: light dark; }
@@ -112,10 +112,14 @@ class _PreviewHTTPServer(ThreadingHTTPServer):
         self.title = title
         self.clients: list[queue.Queue[str | None]] = []
         self.clients_lock = threading.Lock()
+        self.stopping = False
 
-    def add_client(self, client_queue: queue.Queue[str | None]) -> None:
+    def add_client(self, client_queue: queue.Queue[str | None]) -> bool:
         with self.clients_lock:
+            if self.stopping:
+                return False
             self.clients.append(client_queue)
+            return True
 
     def remove_client(self, client_queue: queue.Queue[str | None]) -> None:
         with self.clients_lock:
@@ -131,9 +135,16 @@ class _PreviewHTTPServer(ThreadingHTTPServer):
 
     def close_all_clients(self) -> None:
         with self.clients_lock:
+            self.stopping = True
             clients = list(self.clients)
         for client_queue in clients:
             client_queue.put(None)
+
+    def handle_error(self, request, client_address) -> None:
+        # Best-effort preview server; never write tracebacks to the terminal
+        # Textual owns (BaseHTTPRequestHandler.handle_error defaults to stderr,
+        # which corrupts the TUI's escape-sequence stream).
+        pass
 
 
 class _PreviewHandler(BaseHTTPRequestHandler):
@@ -143,6 +154,11 @@ class _PreviewHandler(BaseHTTPRequestHandler):
         pass  # silence default access logging to stdout
 
     def do_GET(self) -> None:
+        expected_host = f"127.0.0.1:{self.server.server_address[1]}"
+        if self.headers.get("Host") != expected_host:
+            self.send_response(403)
+            self.end_headers()
+            return
         if self.path == "/":
             self._serve_index()
         elif self.path == "/events":
@@ -153,20 +169,23 @@ class _PreviewHandler(BaseHTTPRequestHandler):
 
     def _serve_index(self) -> None:
         body = render_page(self.server.get_text(), self.server.title).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _serve_events(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
         self.end_headers()
         client_queue: queue.Queue[str | None] = queue.Queue()
-        self.server.add_client(client_queue)
+        if not self.server.add_client(client_queue):
+            return
         try:
             while True:
                 fragment = client_queue.get()
@@ -193,7 +212,9 @@ class PreviewServer:
         self._httpd = _PreviewHTTPServer(
             ("127.0.0.1", 0), _PreviewHandler, self._get_text, self._title
         )
-        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread = threading.Thread(
+            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         self._thread.start()
         port = self._httpd.server_address[1]
         return f"http://127.0.0.1:{port}/"
@@ -203,7 +224,7 @@ class PreviewServer:
             self._httpd.publish(text)
 
     @property
-    def last_port(self) -> int | None:
+    def port(self) -> int | None:
         return None if self._httpd is None else self._httpd.server_address[1]
 
     def stop(self) -> None:

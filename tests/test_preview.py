@@ -3,7 +3,7 @@ import urllib.request
 
 import pytest
 
-from tmd_cli.preview import PreviewServer, render_fragment, render_page
+from tmd_cli.preview import PreviewServer, _format_sse_event, render_fragment, render_page
 
 
 def test_render_fragment_heading_and_emphasis():
@@ -41,6 +41,10 @@ def test_render_fragment_never_raises_on_arbitrary_text():
     # Malformed/edge-case input must degrade gracefully, never throw.
     html = render_fragment("<script>alert(1)</script>\n\x00﻿")
     assert isinstance(html, str)
+    # Raw HTML passthrough must be disabled: the script tag should be escaped,
+    # not emitted verbatim (XSS/exfiltration risk against the preview reader).
+    assert "&lt;script&gt;" in html
+    assert "<script>" not in html
 
 
 def test_render_page_embeds_fragment_and_title():
@@ -103,3 +107,12 @@ def test_preview_server_stop_releases_port():
     server.stop()
     with pytest.raises(OSError):
         urllib.request.urlopen(url, timeout=1)
+
+
+def test_format_sse_event_frames_every_line_with_data_prefix():
+    fragment = "<p>first paragraph</p>\n<p>second paragraph</p>"
+    encoded = _format_sse_event(fragment).decode("utf-8")
+    lines = encoded.split("\n")
+    assert lines[0] == "data: <p>first paragraph</p>"
+    assert lines[1] == "data: <p>second paragraph</p>"
+    assert encoded.endswith("\n\n")
