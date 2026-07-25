@@ -208,8 +208,8 @@ class PreviewServer:
 
     def stop(self) -> None:
         if self._httpd is not None:
-            self._httpd.close_all_clients()
             self._httpd.shutdown()
+            self._httpd.close_all_clients()
             self._httpd.server_close()
             self._httpd = None
         if self._thread is not None:
