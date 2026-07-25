@@ -81,13 +81,15 @@ async def test_sort_is_case_insensitive(tmp_path):
 
 @pytest.mark.asyncio
 async def test_tilde_rewrite_does_not_corrupt_sibling_home_dir(tmp_path, monkeypatch):
-    """A suggestion under /home/typemann2 must not be mangled into ~2/... just
-    because it shares a string prefix with home ("/home/typemann"). Since the
-    tilde rewrite doesn't apply here (the match isn't actually under home),
-    the raw absolute suggestion also fails the "extends what was typed"
-    guard (value is "~"), so get_suggestion must return None rather than
-    either the mangled "~2/..." form or the un-rewritten absolute path
-    (which would itself render as corrupted ghost text)."""
+    """Typing a bare "~" expands to the full home directory, whose basename
+    (e.g. "typemann") is unrelated in length to what was actually typed
+    ("~", one character) — there is no "/" separating a literal typed head
+    from the segment being completed, so the expanded basename isn't a
+    literal tail of value. Matching entries in the home directory's parent
+    (here "typemann2", which shares a string prefix with "typemann") must
+    not be turned into ghost text that doesn't literally extend "~" (e.g.
+    "typemann2/" with the tilde silently dropped). get_suggestion must
+    return None rather than corrupt output in this case."""
     home = tmp_path / "typemann"
     sibling = tmp_path / "typemann2"
     sibling.mkdir()
@@ -99,26 +101,76 @@ async def test_tilde_rewrite_does_not_corrupt_sibling_home_dir(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_unresolvable_home_dir_returns_none_without_raising(tmp_path, monkeypatch):
-    """Path.home() can raise RuntimeError when the process's home directory
-    cannot be determined (no HOME env var, no passwd entry for the uid —
-    realistic in some containerized environments). The tilde-rewrite branch
-    in get_suggestion calls Path.home() AFTER a match is found; that call
-    must be covered by the same try/except as the rest of the method, or
-    the RuntimeError escapes get_suggestion and crashes the whole app via
-    Textual's Input worker (exit_on_error=True by default)."""
+async def test_home_dir_completion_does_not_call_path_home(tmp_path, monkeypatch):
+    """get_suggestion builds suggestions from the literal typed prefix, not
+    by reversing a ~-expansion via Path.home() — so a "~/..." completion
+    must succeed even in the (realistic, e.g. some containers) case where
+    Path.home() itself would raise RuntimeError because the process's home
+    directory can't be determined via the passwd database. Path.expanduser()
+    resolves "~" via the HOME env var directly, independent of Path.home(),
+    so the completion should work and Path.home() should never be called."""
     (tmp_path / "readme.md").write_text("", encoding="utf-8")
 
     def raise_runtime_error():
         raise RuntimeError("Could not determine home directory.")
 
-    # Path.expanduser() resolves "~" via os.path.expanduser, which reads
-    # the HOME env var directly (not via Path.home()), so setting HOME
-    # here lets get_suggestion reach the actual tilde-rewrite call site
-    # while Path.home() itself is forced to raise.
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(Path, "home", staticmethod(raise_runtime_error))
 
     suggester = PathSuggester()
     suggestion = await suggester.get_suggestion("~/rea")
-    assert suggestion is None
+    assert suggestion == "~/readme.md"
+
+
+@pytest.mark.asyncio
+async def test_completes_into_other_users_resolvable_home(tmp_path, monkeypatch):
+    """~root-style completions to a real, resolvable OTHER user's home
+    directory must work — the old rewrite-based approach only ever rewrote
+    matches under the CURRENT user's home (via Path.home()), so anything
+    resolving under someone else's home was dropped even though it's a
+    perfectly valid completion. Simulate a resolvable other-user home
+    without needing a second real user account by monkeypatching
+    Path.expanduser to redirect "~otheruser" exactly like the real
+    os.path.expanduser would for an existing other user."""
+    other_home = tmp_path / "otherhome"
+    other_home.mkdir()
+    (other_home / "project").mkdir()
+
+    real_expanduser = Path.expanduser
+
+    def fake_expanduser(self):
+        text = str(self)
+        if text == "~otheruser" or text.startswith("~otheruser/"):
+            return Path(str(other_home) + text[len("~otheruser") :])
+        return real_expanduser(self)
+
+    monkeypatch.setattr(Path, "expanduser", fake_expanduser)
+
+    suggester = PathSuggester()
+    suggestion = await suggester.get_suggestion("~otheruser/pro")
+    assert suggestion == "~otheruser/project/"
+
+
+@pytest.mark.asyncio
+async def test_unicode_casefold_length_mismatch_does_not_corrupt_suggestion(tmp_path):
+    """"straße".casefold() == "strasse" (7 chars vs the raw 6-char "straße"),
+    so a needle like "stras" can match inside the casefolded name at a point
+    that has no corresponding raw character boundary. Textual renders ghost
+    text as suggestion[len(value):], a RAW index — if get_suggestion built a
+    suggestion assuming the casefolded and raw lengths line up, that slice
+    would land mid-fold and corrupt the display (e.g. ".../strase/" instead
+    of the real ".../Straße/"). get_suggestion must not return a suggestion
+    string that would render corrupted; here that means declining to
+    complete rather than fabricating a raw index that doesn't exist."""
+    (tmp_path / "Straße").mkdir()
+    suggester = PathSuggester()
+    value = str(tmp_path / "stras")
+    suggestion = await suggester.get_suggestion(value)
+    if suggestion is not None:
+        # If a suggestion is ever returned here, it must be safe to render:
+        # value + suggestion[len(value):] must reconstruct a string that
+        # doesn't corrupt the real (raw, non-casefolded) directory name.
+        ghost = suggestion[len(value) :]
+        assert value + ghost == str(tmp_path / "Straße") + "/"
+    else:
+        assert suggestion is None

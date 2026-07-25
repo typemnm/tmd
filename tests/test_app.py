@@ -159,6 +159,51 @@ async def test_open_file_dialog_has_path_suggester():
 
 
 @pytest.mark.asyncio
+async def test_open_dialog_enter_with_unresolvable_tilde_user_does_not_crash():
+    """Pressing Enter on an unresolvable "~someuser" (bypassing/ignoring the
+    autocomplete suggestion, which is separately hardened) must not crash
+    the app. Path(path).expanduser() raises RuntimeError for a tilde token
+    with no matching passwd entry — the same mechanism PathSuggester was
+    hardened against — but action_open_file_dialog's open_path() closure
+    calls it directly and unguarded, so submitting via Enter reached the
+    exact same crash through a different path."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        path_input.value = "~this-user-does-not-exist-xyz"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert pilot.app.is_running
+        assert any(
+            n.severity == "error" for n in pilot.app._notifications
+        )
+
+
+@pytest.mark.asyncio
+async def test_save_as_enter_with_unresolvable_tilde_user_does_not_crash():
+    """Same crash, reached via the save-as dialog's selected() closure,
+    which calls Path(path).expanduser().resolve() directly and unguarded."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+shift+s")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        path_input.value = "~this-user-does-not-exist-xyz/out.md"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert pilot.app.is_running
+        assert any(
+            n.severity == "error" for n in pilot.app._notifications
+        )
+
+
+@pytest.mark.asyncio
 async def test_preview_stops_on_unmount(monkeypatch, tmp_path):
     monkeypatch.setattr("tmd_cli.app.webbrowser.open", lambda url: None)
     md = tmp_path / "p.md"

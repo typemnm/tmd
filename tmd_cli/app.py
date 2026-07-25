@@ -47,29 +47,43 @@ class PathSuggester(Suggester):
                 lambda: sorted(parent.iterdir(), key=lambda p: p.name.casefold())
             )
             needle = prefix.casefold()
+            # Path(value).expanduser() only ever rewrites a leading
+            # ~/~user token and never touches the rest of the path string,
+            # so the substring of the ORIGINAL value corresponding to the
+            # segment currently being completed is exactly
+            # value[len(value) - len(prefix):] — *provided* that tail
+            # actually equals prefix. It won't when value is a bare,
+            # unresolved ~/~user token with no "/" yet (e.g. "~"): there,
+            # expansion rewrites the whole string, so prefix comes from the
+            # expanded home directory's basename rather than from anything
+            # literally typed, and there is no safe "already-typed head" to
+            # extend. Skip that case instead of returning corrupted ghost
+            # text; every other shape of input (~-prefixed with a path
+            # after it, absolute, relative, trailing-slash browse) keeps
+            # prefix as a literal tail of value, so the reconstruction
+            # below is safe there.
+            typed_head = value[: len(value) - len(prefix)]
+            if typed_head + prefix != value:
+                return None
             for entry in entries:
                 if not needle and entry.name.startswith("."):
                     continue
-                if entry.name.casefold().startswith(needle):
+                # Textual renders ghost text as suggestion[len(value):],
+                # which slices entry.name at the RAW index len(prefix) —
+                # so matching must confirm that the entry's raw (not
+                # casefolded) leading len(prefix) characters are what
+                # actually matched. A plain
+                # entry.name.casefold().startswith(needle) isn't enough:
+                # Unicode casefolding can change length (e.g. "ß" ->
+                # "ss"), so a needle can match within the casefolded
+                # string at a point that doesn't line up with any raw
+                # character boundary, corrupting the raw-index slice
+                # (e.g. "Straße" prefix-matched by "stras" would slice
+                # mid-fold and render as "strase/").
+                if entry.name[: len(prefix)].casefold() == needle:
                     suggestion_path = parent / entry.name
                     is_dir = await asyncio.to_thread(suggestion_path.is_dir)
-                    suggestion = str(suggestion_path) + ("/" if is_dir else "")
-                    if value.startswith("~"):
-                        home = str(Path.home())
-                        if suggestion == home or suggestion.startswith(home + "/"):
-                            suggestion = "~" + suggestion[len(home):]
-                    # Defensive guard: Textual's Input renders
-                    # value + suggestion[len(value):], so a suggestion that
-                    # doesn't literally extend value produces corrupted
-                    # ghost text (e.g. "~daemon" resolving to an unrelated
-                    # absolute path like "/usr/sbin/"). Compare casefolded
-                    # since matching above is case-insensitive by design
-                    # (see class docstring) — that intentional case
-                    # preservation isn't the corruption this guards
-                    # against.
-                    if not suggestion.casefold().startswith(value.casefold()):
-                        return None
-                    return suggestion
+                    return typed_head + entry.name + ("/" if is_dir else "")
             return None
         except (OSError, ValueError, RuntimeError):
             return None
@@ -357,7 +371,11 @@ class TmdApp(App):
     def action_open_file_dialog(self) -> None:
         def open_path(path: str | None) -> None:
             if path:
-                p = Path(path).expanduser()
+                try:
+                    p = Path(path).expanduser()
+                except (OSError, ValueError, RuntimeError) as error:
+                    self.notify(f"경로를 해석할 수 없습니다: {error}", severity="error")
+                    return
                 if p.is_file():
                     self._resolve_changes(lambda: self._open_path(str(p.resolve())))
                 else:
@@ -420,7 +438,11 @@ class TmdApp(App):
         def selected(path: str | None) -> None:
             if not path:
                 return
-            target = Path(path).expanduser().resolve()
+            try:
+                target = Path(path).expanduser().resolve()
+            except (OSError, ValueError, RuntimeError) as error:
+                self.notify(f"경로를 해석할 수 없습니다: {error}", severity="error")
+                return
             if not target.parent.is_dir():
                 self.notify("상위 디렉터리가 존재하지 않습니다.", severity="error")
                 return

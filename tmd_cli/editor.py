@@ -54,14 +54,17 @@ class UnsavedChangesError(RuntimeError):
 class MarkdownEditor(TextArea):
     """Markdown editor widget with syntax styling and safe persistence."""
 
-    # Every terminal reports a physical Ctrl+I keystroke as the same raw
-    # byte as Tab, and Textual's ANSI parser always names that byte "tab" —
-    # BINDINGS matching is a literal string match on event.key with no
-    # alias expansion (KEY_ALIASES only affects key_*-method dispatch), so
-    # a Binding("ctrl+i", ...) can never actually fire. Italic had no
-    # working keyboard shortcut at all until this rebind. Ctrl+B is tmux's
-    # default prefix key — it would silently fail to reach the editor in
-    # common setups, so bold/italic use Alt instead.
+    # On terminals without the Kitty keyboard protocol (most terminals,
+    # including anything using legacy/xterm-style input), a physical Ctrl+I
+    # keystroke is reported as the same raw byte as Tab, and Textual's ANSI
+    # parser names that byte "tab" — BINDINGS matching is a literal string
+    # match on event.key with no alias expansion (KEY_ALIASES only affects
+    # key_*-method dispatch), so a Binding("ctrl+i", ...) was unreliable
+    # across terminals (it only fires on terminals that opt into Kitty-style
+    # key disambiguation, e.g. kitty, ghostty, WezTerm, foot). Ctrl+B is
+    # tmux's default prefix key — it would silently fail to reach the editor
+    # in common setups. Alt+B/Alt+I work consistently across both legacy and
+    # Kitty-protocol terminals, so bold/italic use Alt instead.
     BINDINGS = [
         Binding("ctrl+s", "save", "저장"),
         Binding("alt+b", "toggle_bold", "굵게"),
