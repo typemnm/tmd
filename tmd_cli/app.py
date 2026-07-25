@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 
 from tmd_cli import __version__
 from tmd_cli.editor import EditorFileError, MarkdownEditor
+from tmd_cli.preview import PreviewServer
 from tmd_cli.sidebar import Sidebar
+
+_PREVIEW_DEBOUNCE = 0.2  # seconds
 
 
 class PathDialog(ModalScreen[str | None]):
@@ -126,21 +131,42 @@ class StatusBar(Static):
     }
     """
 
+    _preview_url: str | None = None
+
+    def _with_preview_suffix(self, text: str) -> str:
+        if self._preview_url:
+            return f"{text}  |  ● 미리보기 {self._preview_url}"
+        return text
+
     def set_saved(self, path: str) -> None:
-        self.update(f"● Saved  {path}")
+        self.update(self._with_preview_suffix(f"● Saved  {path}"))
 
     def set_modified(self) -> None:
         name = self.app.query_one(MarkdownEditor).current_path or "제목 없음"
-        self.update(f"○ Unsaved  {name}")
+        self.update(self._with_preview_suffix(f"○ Unsaved  {name}"))
 
     def set_new(self) -> None:
-        self.update("○ Unsaved  제목 없음")
+        self.update(self._with_preview_suffix("○ Unsaved  제목 없음"))
 
     def set_idle(self) -> None:
-        self.update("tmd — Terminal Markdown Editor  |  F1: Help")
+        self.update(self._with_preview_suffix("tmd — Terminal Markdown Editor  |  F1: Help"))
+
+    def set_preview_url(self, url: str | None) -> None:
+        self._preview_url = url
+        editor = self.app.query_one(MarkdownEditor)
+        if editor.current_path is None:
+            self.set_new()
+        elif editor.is_dirty:
+            self.set_modified()
+        else:
+            self.set_saved(editor.current_path)
 
 
 class TmdApp(App):
+    # Textual's default command palette is bound to ctrl+p; tmd doesn't use
+    # the command palette, so disable it to free ctrl+p for preview toggle.
+    ENABLE_COMMAND_PALETTE = False
+
     CSS = """
     Horizontal { height: 1fr; }
     MarkdownEditor { width: 1fr; }
@@ -154,6 +180,7 @@ class TmdApp(App):
         ("ctrl+o", "open_file_dialog", "파일 열기"),
         ("ctrl+f", "find", "검색"),
         ("ctrl+shift+s", "save_as", "다른 이름으로 저장"),
+        ("ctrl+p", "toggle_preview", "미리보기"),
         ("f1", "show_help", "Help"),
     ]
 
@@ -166,6 +193,8 @@ class TmdApp(App):
         super().__init__(**kwargs)
         self._initial_path = initial_path
         self._root = root
+        self._preview: PreviewServer | None = None
+        self._preview_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -190,6 +219,8 @@ class TmdApp(App):
 
     def on_markdown_editor_modified(self, event: MarkdownEditor.Modified) -> None:
         self.query_one(StatusBar).set_modified()
+        if self._preview is not None:
+            self._schedule_preview_publish()
 
     def on_markdown_editor_save_requested(
         self, event: MarkdownEditor.SaveRequested
@@ -202,6 +233,45 @@ class TmdApp(App):
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one(Sidebar)
         sidebar.display = not sidebar.display
+
+    def action_toggle_preview(self) -> None:
+        if self._preview is None:
+            editor = self.query_one(MarkdownEditor)
+            preview = PreviewServer(
+                get_text=lambda: editor.text,
+                title=editor.current_path or "제목 없음",
+            )
+            try:
+                url = preview.start()
+            except OSError as error:
+                self.notify(
+                    f"미리보기 서버를 열지 못했습니다: {error}", severity="error", timeout=8
+                )
+                return
+            self._preview = preview
+            webbrowser.open(url)
+            self.query_one(StatusBar).set_preview_url(url)
+            self.notify(f"미리보기 시작: {url}", timeout=6)
+        else:
+            self._preview.stop()
+            self._preview = None
+            self.query_one(StatusBar).set_preview_url(None)
+            self.notify("미리보기 종료", timeout=3)
+
+    def _schedule_preview_publish(self) -> None:
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+        self._preview_timer = self.set_timer(_PREVIEW_DEBOUNCE, self._publish_preview)
+
+    def _publish_preview(self) -> None:
+        self._preview_timer = None
+        if self._preview is not None:
+            self._preview.publish(self.query_one(MarkdownEditor).text)
+
+    def on_unmount(self) -> None:
+        if self._preview is not None:
+            self._preview.stop()
+            self._preview = None
 
     def action_new_file(self) -> None:
         self._resolve_changes(self._new_document)
@@ -237,7 +307,7 @@ class TmdApp(App):
         self.notify(
             "Ctrl+S: Save | Ctrl+Q: Quit | Ctrl+B: Bold | Ctrl+I: Italic"
             " | Ctrl+Shift+S: Save As | Ctrl+N: New"
-            " | Ctrl+F: Find | Ctrl+\\: Toggle Sidebar | F1: Help",
+            " | Ctrl+F: Find | Ctrl+\\: Toggle Sidebar | Ctrl+P: 미리보기 | F1: Help",
             title="tmd Keyboard Shortcuts",
             timeout=6,
         )
