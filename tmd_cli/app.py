@@ -46,26 +46,42 @@ class PathSuggester(Suggester):
             entries = await asyncio.to_thread(
                 lambda: sorted(parent.iterdir(), key=lambda p: p.name.casefold())
             )
+            needle = prefix.casefold()
+            for entry in entries:
+                if not needle and entry.name.startswith("."):
+                    continue
+                if entry.name.casefold().startswith(needle):
+                    suggestion_path = parent / entry.name
+                    is_dir = await asyncio.to_thread(suggestion_path.is_dir)
+                    suggestion = str(suggestion_path) + ("/" if is_dir else "")
+                    if value.startswith("~"):
+                        home = str(Path.home())
+                        if suggestion == home or suggestion.startswith(home + "/"):
+                            suggestion = "~" + suggestion[len(home):]
+                    # Defensive guard: Textual's Input renders
+                    # value + suggestion[len(value):], so a suggestion that
+                    # doesn't literally extend value produces corrupted
+                    # ghost text (e.g. "~daemon" resolving to an unrelated
+                    # absolute path like "/usr/sbin/"). Compare casefolded
+                    # since matching above is case-insensitive by design
+                    # (see class docstring) — that intentional case
+                    # preservation isn't the corruption this guards
+                    # against.
+                    if not suggestion.casefold().startswith(value.casefold()):
+                        return None
+                    return suggestion
+            return None
         except (OSError, ValueError, RuntimeError):
             return None
-        needle = prefix.casefold()
-        for entry in entries:
-            if not needle and entry.name.startswith("."):
-                continue
-            if entry.name.casefold().startswith(needle):
-                suggestion_path = parent / entry.name
-                is_dir = await asyncio.to_thread(suggestion_path.is_dir)
-                suggestion = str(suggestion_path) + ("/" if is_dir else "")
-                if value.startswith("~"):
-                    home = str(Path.home())
-                    if suggestion == home or suggestion.startswith(home + "/"):
-                        suggestion = "~" + suggestion[len(home):]
-                return suggestion
-        return None
 
 
 class PathDialog(ModalScreen[str | None]):
-    """Modal path input used for open and save-as operations."""
+    """Modal text input used for open, save-as, and search (Ctrl+F).
+
+    Path autocomplete (PathSuggester) is only attached for the open and
+    save-as cases; the search dialog passes suggest_paths=False since its
+    input is a search term, not a filesystem path.
+    """
 
     DEFAULT_CSS = """
     PathDialog { align: center middle; }

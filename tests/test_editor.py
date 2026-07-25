@@ -93,12 +93,19 @@ async def test_modified_message_posted(tmp_path):
 
 @pytest.mark.asyncio
 async def test_bindings_present():
-    """BINDINGS must include ctrl+s, alt+b, alt+i (not ctrl+b/ctrl+i — those
-    alias Tab and tmux's default prefix key, respectively)."""
+    """BINDINGS must include ctrl+s, alt+b, alt+i, and must NOT include the
+    old ctrl+b/ctrl+i bindings. ctrl+i is unreachable in practice (every
+    terminal reports that keystroke as "tab", which Textual's BINDINGS
+    matching treats as a plain, literal "tab" event — never "ctrl+i"), and
+    ctrl+b collides with tmux's default prefix key, so bold/italic use Alt
+    instead. This is a code-level regression lock: it fails if the old
+    bindings are ever re-added."""
     binding_keys = {b.key for b in MarkdownEditor.BINDINGS}
     assert "ctrl+s" in binding_keys
     assert "alt+b" in binding_keys
     assert "alt+i" in binding_keys
+    assert "ctrl+b" not in binding_keys
+    assert "ctrl+i" not in binding_keys
 
 
 @pytest.mark.asyncio
@@ -134,21 +141,20 @@ async def test_alt_b_toggles_bold_via_keypress():
 
 
 @pytest.mark.asyncio
-async def test_tab_no_longer_toggles_italic():
-    """Regression test: Tab used to alias ctrl+i (italic) on many terminals.
-    After the alt+b/alt+i rebind, Tab must be a no-op for the editor text
-    (it moves focus instead)."""
+async def test_alt_i_toggles_italic_via_keypress():
+    """Pressing alt+i with a selection wraps it in * (the actual key path,
+    not just action_toggle_italic called directly) — the real keyboard
+    shortcut for italic now that ctrl+i can never fire (see
+    test_bindings_present)."""
     async with EditorApp().run_test() as pilot:
         editor = pilot.app.query_one(MarkdownEditor)
         editor.focus()
         editor.load_text("hello world")
         await pilot.pause()
         editor.selection = editor.selection.__class__((0, 0), (0, 5))
-        before = editor.text
-        await pilot.press("tab")
+        await pilot.press("alt+i")
         await pilot.pause()
-        assert editor.text == before
-        assert "*hello*" not in editor.text
+        assert "*hello*" in editor.text
 
 
 @pytest.mark.asyncio

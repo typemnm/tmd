@@ -82,7 +82,12 @@ async def test_sort_is_case_insensitive(tmp_path):
 @pytest.mark.asyncio
 async def test_tilde_rewrite_does_not_corrupt_sibling_home_dir(tmp_path, monkeypatch):
     """A suggestion under /home/typemann2 must not be mangled into ~2/... just
-    because it shares a string prefix with home ("/home/typemann")."""
+    because it shares a string prefix with home ("/home/typemann"). Since the
+    tilde rewrite doesn't apply here (the match isn't actually under home),
+    the raw absolute suggestion also fails the "extends what was typed"
+    guard (value is "~"), so get_suggestion must return None rather than
+    either the mangled "~2/..." form or the un-rewritten absolute path
+    (which would itself render as corrupted ghost text)."""
     home = tmp_path / "typemann"
     sibling = tmp_path / "typemann2"
     sibling.mkdir()
@@ -90,5 +95,30 @@ async def test_tilde_rewrite_does_not_corrupt_sibling_home_dir(tmp_path, monkeyp
     monkeypatch.setattr(Path, "home", lambda: home)
     suggester = PathSuggester()
     suggestion = await suggester.get_suggestion("~")
-    assert suggestion == str(sibling) + "/"
-    assert not suggestion.startswith("~2")
+    assert suggestion is None
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_home_dir_returns_none_without_raising(tmp_path, monkeypatch):
+    """Path.home() can raise RuntimeError when the process's home directory
+    cannot be determined (no HOME env var, no passwd entry for the uid —
+    realistic in some containerized environments). The tilde-rewrite branch
+    in get_suggestion calls Path.home() AFTER a match is found; that call
+    must be covered by the same try/except as the rest of the method, or
+    the RuntimeError escapes get_suggestion and crashes the whole app via
+    Textual's Input worker (exit_on_error=True by default)."""
+    (tmp_path / "readme.md").write_text("", encoding="utf-8")
+
+    def raise_runtime_error():
+        raise RuntimeError("Could not determine home directory.")
+
+    # Path.expanduser() resolves "~" via os.path.expanduser, which reads
+    # the HOME env var directly (not via Path.home()), so setting HOME
+    # here lets get_suggestion reach the actual tilde-rewrite call site
+    # while Path.home() itself is forced to raise.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", staticmethod(raise_runtime_error))
+
+    suggester = PathSuggester()
+    suggestion = await suggester.get_suggestion("~/rea")
+    assert suggestion is None
