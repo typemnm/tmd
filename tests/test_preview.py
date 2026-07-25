@@ -22,8 +22,13 @@ def test_render_fragment_table():
 
 def test_render_fragment_task_list_checkboxes():
     html = render_fragment("- [x] done\n- [ ] todo\n")
-    assert '<input class="task-list-item-checkbox" checked="checked" disabled="disabled" type="checkbox">' in html
-    assert '<input class="task-list-item-checkbox" disabled="disabled" type="checkbox">' in html
+    checked = (
+        '<input class="task-list-item-checkbox" checked="checked"'
+        ' disabled="disabled" type="checkbox">'
+    )
+    unchecked = '<input class="task-list-item-checkbox" disabled="disabled" type="checkbox">'
+    assert checked in html
+    assert unchecked in html
 
 
 def test_render_fragment_code_fence():
