@@ -1,4 +1,7 @@
 
+import asyncio
+import urllib.request
+
 import pytest
 
 from tmd_cli.app import StatusBar, TmdApp
@@ -85,3 +88,60 @@ async def test_modified_updates_status_bar(tmp_path):
         await pilot.pause()
         await pilot.pause()
         assert "미저장" in str(status.content) or "○" in str(status.content)
+
+
+@pytest.mark.asyncio
+async def test_action_toggle_preview(monkeypatch, tmp_path):
+    monkeypatch.setattr("tmd_cli.app.webbrowser.open", lambda url: None)
+    md = tmp_path / "p.md"
+    md.write_text("# Hi", encoding="utf-8")
+    async with TmdApp(initial_path=str(md)).run_test(size=(120, 40)) as pilot:
+        assert pilot.app._preview is None
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert pilot.app._preview is not None
+
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert pilot.app._preview is None
+
+
+@pytest.mark.asyncio
+async def test_typing_publishes_to_preview_after_debounce(monkeypatch, tmp_path):
+    monkeypatch.setattr("tmd_cli.app.webbrowser.open", lambda url: None)
+    md = tmp_path / "p.md"
+    md.write_text("hello", encoding="utf-8")
+    async with TmdApp(initial_path=str(md)).run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+
+        published: list[str] = []
+        pilot.app._preview.publish = published.append
+
+        editor = pilot.app.query_one(MarkdownEditor)
+        editor.focus()
+        await pilot.pause()
+        await pilot.press("end", "!")
+        await pilot.pause()
+        await asyncio.sleep(0.35)
+        await pilot.pause()
+
+        assert published
+        assert published[-1] == "hello!"
+
+
+@pytest.mark.asyncio
+async def test_preview_stops_on_unmount(monkeypatch, tmp_path):
+    monkeypatch.setattr("tmd_cli.app.webbrowser.open", lambda url: None)
+    md = tmp_path / "p.md"
+    md.write_text("# Hi", encoding="utf-8")
+    async with TmdApp(initial_path=str(md)).run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        server = pilot.app._preview
+        assert server is not None
+        port = server.last_port  # capture before unmount stops the server
+
+    # After the app context exits, App.on_unmount must have stopped the server.
+    with pytest.raises(OSError):
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1)

@@ -2,6 +2,12 @@
 
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따릅니다.
 
+## [Unreleased]
+
+### Added
+
+- `Ctrl+P` 웹 브라우저 미리보기 — 현재 파일을 노션 스타일로 렌더링하고 타이핑에 맞춰 실시간 갱신 (localhost 전용, 읽기 전용)
+
 ## [0.1.0] - 2026-07-23
 
 ### Added
