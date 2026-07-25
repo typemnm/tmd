@@ -2,6 +2,12 @@
 
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따릅니다.
 
+## [0.2.2] - 2026-07-25
+
+### Fixed
+
+- WSL 환경에서 `Ctrl+P` 웹 프리뷰를 켜도 브라우저가 열리지 않던 문제 수정 — `webbrowser.open()`이 위임하는 `xdg-open`/`wslview`가 일부 WSL 커널에서 `/proc/sys/fs/binfmt_misc/WSLInterop` 존재 여부로 WSL을 감지하는데, 해당 파일이 `WSLInterop-late`로만 노출되는 환경에서는 이 감지가 실패해 아무 동작 없이 조용히 종료되었다(그러나 종료 코드는 0이라 tmd는 성공한 것으로 알림). WSL 감지 시 `cmd.exe /c start`로 직접 여는 방식을 우선 시도하도록 변경, WSL이 아니거나 `cmd.exe`를 찾지 못하면 기존 방식으로 폴백
+
 ## [0.2.1] - 2026-07-25
 
 ### Added
