@@ -93,11 +93,12 @@ async def test_modified_message_posted(tmp_path):
 
 @pytest.mark.asyncio
 async def test_bindings_present():
-    """BINDINGS must include ctrl+s, ctrl+b, ctrl+i."""
+    """BINDINGS must include ctrl+s, alt+b, alt+i (not ctrl+b/ctrl+i — those
+    alias Tab and tmux's default prefix key, respectively)."""
     binding_keys = {b.key for b in MarkdownEditor.BINDINGS}
     assert "ctrl+s" in binding_keys
-    assert "ctrl+b" in binding_keys
-    assert "ctrl+i" in binding_keys
+    assert "alt+b" in binding_keys
+    assert "alt+i" in binding_keys
 
 
 @pytest.mark.asyncio

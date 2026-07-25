@@ -351,7 +351,7 @@ class TmdApp(App):
 
     def action_show_help(self) -> None:
         self.notify(
-            "Ctrl+S: Save | Ctrl+Q: Quit | Ctrl+B: Bold | Ctrl+I: Italic"
+            "Ctrl+S: Save | Ctrl+Q: Quit | Alt+B: Bold | Alt+I: Italic"
             " | Ctrl+Shift+S: Save As | Ctrl+N: New"
             " | Ctrl+F: Find | Ctrl+\\: Toggle Sidebar | Ctrl+P: 미리보기 | F1: Help",
             title="tmd Keyboard Shortcuts",
