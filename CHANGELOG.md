@@ -2,6 +2,16 @@
 
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따릅니다.
 
+## [Unreleased]
+
+### Added
+
+- 파일 열기/다른 이름으로 저장 다이얼로그에 경로 인라인 자동완성 추가
+
+### Changed
+
+- 굵게/기울임 단축키를 `Ctrl+B`/`Ctrl+I`에서 `Alt+G`/`Alt+I`로 변경 — `Ctrl+I`는 Kitty 키보드 프로토콜을 지원하지 않는 터미널(대다수)에서 Tab과 동일한 바이트이고, `Ctrl+B`는 tmux 기본 prefix 키와 겹쳐 두 경우 모두 tmd에 도달하지 못할 수 있었다. 처음 시도한 `Alt+B`는 Kitty 프로토콜이 없는 터미널에서 Textual의 레거시 ANSI 매핑에 의해 `ctrl+left`로 가로채지는 것이 추가로 발견되어 `Alt+G`로 확정했다
+
 ## [0.2.0] - 2026-07-25
 
 ### Added

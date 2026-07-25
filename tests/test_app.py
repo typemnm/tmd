@@ -3,8 +3,9 @@ import asyncio
 import urllib.request
 
 import pytest
+from textual.widgets import Input
 
-from tmd_cli.app import StatusBar, TmdApp
+from tmd_cli.app import PathDialog, StatusBar, TmdApp, main
 from tmd_cli.editor import MarkdownEditor
 from tmd_cli.sidebar import Sidebar
 
@@ -128,6 +129,96 @@ async def test_typing_publishes_to_preview_after_debounce(monkeypatch, tmp_path)
 
         assert published
         assert published[-1] == "hello!"
+
+
+@pytest.mark.asyncio
+async def test_find_dialog_has_no_path_suggester():
+    """Ctrl+F's search dialog must not get path autocomplete — accepting a
+    ghost-text suggestion there would silently replace the search query."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        assert path_input.suggester is None
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_open_file_dialog_has_path_suggester():
+    """Ctrl+O's file-open dialog should keep its path autocomplete."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        assert path_input.suggester is not None
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_open_dialog_enter_with_unresolvable_tilde_user_does_not_crash():
+    """Pressing Enter on an unresolvable "~someuser" (bypassing/ignoring the
+    autocomplete suggestion, which is separately hardened) must not crash
+    the app. Path(path).expanduser() raises RuntimeError for a tilde token
+    with no matching passwd entry — the same mechanism PathSuggester was
+    hardened against — but action_open_file_dialog's open_path() closure
+    calls it directly and unguarded, so submitting via Enter reached the
+    exact same crash through a different path."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        path_input.value = "~this-user-does-not-exist-xyz"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert pilot.app.is_running
+        assert any(
+            n.severity == "error" for n in pilot.app._notifications
+        )
+
+
+@pytest.mark.asyncio
+async def test_save_as_enter_with_unresolvable_tilde_user_does_not_crash():
+    """Same crash, reached via the save-as dialog's selected() closure,
+    which calls Path(path).expanduser().resolve() directly and unguarded."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+shift+s")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        path_input.value = "~this-user-does-not-exist-xyz/out.md"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert pilot.app.is_running
+        assert any(
+            n.severity == "error" for n in pilot.app._notifications
+        )
+
+
+def test_main_with_unresolvable_tilde_user_path_exits_cleanly(monkeypatch, capsys):
+    """main()'s CLI argument path is the last unguarded spot with this crash
+    class: Path(args.path).expanduser().resolve() raises RuntimeError for an
+    unresolvable "~someuser" token (no matching passwd entry), the same
+    mechanism PathSuggester and the open/save-as dialogs were hardened
+    against. It must be caught and turned into the same clean
+    parser.error(...) used for the "neither file nor directory" case, not
+    let propagate as a raw traceback."""
+    monkeypatch.setattr(
+        "sys.argv", ["tmd", "~this-user-does-not-exist-xyz/out.md"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "File or directory not found" in captured.err
 
 
 @pytest.mark.asyncio

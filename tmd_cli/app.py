@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 
@@ -19,8 +21,81 @@ from tmd_cli.sidebar import Sidebar
 _PREVIEW_DEBOUNCE = 0.2  # seconds
 
 
+class PathSuggester(Suggester):
+    """Inline path completion for PathDialog's Input.
+
+    Receives the raw (non-casefolded) value so the already-typed portion of
+    the suggestion keeps the user's exact casing; matching itself is done
+    case-insensitively against the real directory entries.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(case_sensitive=True, use_cache=False)
+
+    async def get_suggestion(self, value: str) -> str | None:
+        if not value:
+            return None
+        try:
+            raw = Path(value).expanduser()
+            if value.endswith("/"):
+                parent = raw
+                prefix = ""
+            else:
+                parent = raw.parent
+                prefix = raw.name
+            entries = await asyncio.to_thread(
+                lambda: sorted(parent.iterdir(), key=lambda p: p.name.casefold())
+            )
+            needle = prefix.casefold()
+            # Path(value).expanduser() only ever rewrites a leading
+            # ~/~user token and never touches the rest of the path string,
+            # so the substring of the ORIGINAL value corresponding to the
+            # segment currently being completed is exactly
+            # value[len(value) - len(prefix):] — *provided* that tail
+            # actually equals prefix. It won't when value is a bare,
+            # unresolved ~/~user token with no "/" yet (e.g. "~"): there,
+            # expansion rewrites the whole string, so prefix comes from the
+            # expanded home directory's basename rather than from anything
+            # literally typed, and there is no safe "already-typed head" to
+            # extend. Skip that case instead of returning corrupted ghost
+            # text; every other shape of input (~-prefixed with a path
+            # after it, absolute, relative, trailing-slash browse) keeps
+            # prefix as a literal tail of value, so the reconstruction
+            # below is safe there.
+            typed_head = value[: len(value) - len(prefix)]
+            if typed_head + prefix != value:
+                return None
+            for entry in entries:
+                if not needle and entry.name.startswith("."):
+                    continue
+                # Textual renders ghost text as suggestion[len(value):],
+                # which slices entry.name at the RAW index len(prefix) —
+                # so matching must confirm that the entry's raw (not
+                # casefolded) leading len(prefix) characters are what
+                # actually matched. A plain
+                # entry.name.casefold().startswith(needle) isn't enough:
+                # Unicode casefolding can change length (e.g. "ß" ->
+                # "ss"), so a needle can match within the casefolded
+                # string at a point that doesn't line up with any raw
+                # character boundary, corrupting the raw-index slice
+                # (e.g. "Straße" prefix-matched by "stras" would slice
+                # mid-fold and render as "strase/").
+                if entry.name[: len(prefix)].casefold() == needle:
+                    suggestion_path = parent / entry.name
+                    is_dir = await asyncio.to_thread(suggestion_path.is_dir)
+                    return typed_head + entry.name + ("/" if is_dir else "")
+            return None
+        except (OSError, ValueError, RuntimeError):
+            return None
+
+
 class PathDialog(ModalScreen[str | None]):
-    """Modal path input used for open and save-as operations."""
+    """Modal text input used for open, save-as, and search (Ctrl+F).
+
+    Path autocomplete (PathSuggester) is only attached for the open and
+    save-as cases; the search dialog passes suggest_paths=False since its
+    input is a search term, not a filesystem path.
+    """
 
     DEFAULT_CSS = """
     PathDialog { align: center middle; }
@@ -35,16 +110,28 @@ class PathDialog(ModalScreen[str | None]):
     """
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, placeholder: str, value: str = "") -> None:
+    def __init__(
+        self,
+        title: str,
+        placeholder: str,
+        value: str = "",
+        suggest_paths: bool = True,
+    ) -> None:
         super().__init__()
         self._title = title
         self._placeholder = placeholder
         self._value = value
+        self._suggest_paths = suggest_paths
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(self._title)
-            yield Input(value=self._value, placeholder=self._placeholder, id="path")
+            yield Input(
+                value=self._value,
+                placeholder=self._placeholder,
+                suggester=PathSuggester() if self._suggest_paths else None,
+                id="path",
+            )
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -284,7 +371,11 @@ class TmdApp(App):
     def action_open_file_dialog(self) -> None:
         def open_path(path: str | None) -> None:
             if path:
-                p = Path(path).expanduser()
+                try:
+                    p = Path(path).expanduser()
+                except (OSError, ValueError, RuntimeError) as error:
+                    self.notify(f"경로를 해석할 수 없습니다: {error}", severity="error")
+                    return
                 if p.is_file():
                     self._resolve_changes(lambda: self._open_path(str(p.resolve())))
                 else:
@@ -298,14 +389,17 @@ class TmdApp(App):
         self._prompt_save_as()
 
     def action_find(self) -> None:
-        self.push_screen(PathDialog("문서 검색", "검색어 입력 후 Enter..."), self._find_text)
+        self.push_screen(
+            PathDialog("문서 검색", "검색어 입력 후 Enter...", suggest_paths=False),
+            self._find_text,
+        )
 
     def action_quit(self) -> None:
         self._resolve_changes(self.exit)
 
     def action_show_help(self) -> None:
         self.notify(
-            "Ctrl+S: Save | Ctrl+Q: Quit | Ctrl+B: Bold | Ctrl+I: Italic"
+            "Ctrl+S: Save | Ctrl+Q: Quit | Alt+G: Bold | Alt+I: Italic"
             " | Ctrl+Shift+S: Save As | Ctrl+N: New"
             " | Ctrl+F: Find | Ctrl+\\: Toggle Sidebar | Ctrl+P: 미리보기 | F1: Help",
             title="tmd Keyboard Shortcuts",
@@ -344,7 +438,11 @@ class TmdApp(App):
         def selected(path: str | None) -> None:
             if not path:
                 return
-            target = Path(path).expanduser().resolve()
+            try:
+                target = Path(path).expanduser().resolve()
+            except (OSError, ValueError, RuntimeError) as error:
+                self.notify(f"경로를 해석할 수 없습니다: {error}", severity="error")
+                return
             if not target.parent.is_dir():
                 self.notify("상위 디렉터리가 존재하지 않습니다.", severity="error")
                 return
@@ -444,7 +542,10 @@ def main() -> None:
     root: str | None = None
 
     if args.path:
-        p = Path(args.path).expanduser().resolve()
+        try:
+            p = Path(args.path).expanduser().resolve()
+        except (OSError, ValueError, RuntimeError):
+            parser.error(f"File or directory not found: {args.path}")
         if p.is_dir():
             root = str(p)
         elif p.is_file():
