@@ -4,9 +4,12 @@
 
 ## [Unreleased]
 
-### Changed
+### Added
 
 - 파일 열기/다른 이름으로 저장 다이얼로그에 경로 인라인 자동완성 추가
+
+### Changed
+
 - 굵게/기울임 단축키를 `Ctrl+B`/`Ctrl+I`에서 `Alt+B`/`Alt+I`로 변경 — `Ctrl+I`는 모든 터미널에서 Tab과 동일한 바이트이고, `Ctrl+B`는 tmux 기본 prefix 키와 겹쳐 두 경우 모두 tmd에 도달하지 못할 수 있었다
 
 ## [0.2.0] - 2026-07-25

@@ -35,26 +35,30 @@ class PathSuggester(Suggester):
     async def get_suggestion(self, value: str) -> str | None:
         if not value:
             return None
-        raw = Path(value).expanduser()
-        if value.endswith("/"):
-            parent = raw
-            prefix = ""
-        else:
-            parent = raw.parent
-            prefix = raw.name
         try:
-            entries = await asyncio.to_thread(lambda: sorted(parent.iterdir()))
-        except OSError:
+            raw = Path(value).expanduser()
+            if value.endswith("/"):
+                parent = raw
+                prefix = ""
+            else:
+                parent = raw.parent
+                prefix = raw.name
+            entries = await asyncio.to_thread(
+                lambda: sorted(parent.iterdir(), key=lambda p: p.name.casefold())
+            )
+        except (OSError, ValueError, RuntimeError):
             return None
         needle = prefix.casefold()
         for entry in entries:
+            if not needle and entry.name.startswith("."):
+                continue
             if entry.name.casefold().startswith(needle):
                 suggestion_path = parent / entry.name
                 is_dir = await asyncio.to_thread(suggestion_path.is_dir)
                 suggestion = str(suggestion_path) + ("/" if is_dir else "")
                 if value.startswith("~"):
                     home = str(Path.home())
-                    if suggestion.startswith(home):
+                    if suggestion == home or suggestion.startswith(home + "/"):
                         suggestion = "~" + suggestion[len(home):]
                 return suggestion
         return None
@@ -76,11 +80,18 @@ class PathDialog(ModalScreen[str | None]):
     """
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, placeholder: str, value: str = "") -> None:
+    def __init__(
+        self,
+        title: str,
+        placeholder: str,
+        value: str = "",
+        suggest_paths: bool = True,
+    ) -> None:
         super().__init__()
         self._title = title
         self._placeholder = placeholder
         self._value = value
+        self._suggest_paths = suggest_paths
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -88,7 +99,7 @@ class PathDialog(ModalScreen[str | None]):
             yield Input(
                 value=self._value,
                 placeholder=self._placeholder,
-                suggester=PathSuggester(),
+                suggester=PathSuggester() if self._suggest_paths else None,
                 id="path",
             )
 
@@ -344,7 +355,10 @@ class TmdApp(App):
         self._prompt_save_as()
 
     def action_find(self) -> None:
-        self.push_screen(PathDialog("문서 검색", "검색어 입력 후 Enter..."), self._find_text)
+        self.push_screen(
+            PathDialog("문서 검색", "검색어 입력 후 Enter...", suggest_paths=False),
+            self._find_text,
+        )
 
     def action_quit(self) -> None:
         self._resolve_changes(self.exit)

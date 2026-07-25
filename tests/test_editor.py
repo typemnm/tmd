@@ -119,6 +119,39 @@ async def test_annotate_line_applied(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_alt_b_toggles_bold_via_keypress():
+    """Pressing alt+b with a selection wraps it in ** (the actual key path,
+    not just action_toggle_bold called directly)."""
+    async with EditorApp().run_test() as pilot:
+        editor = pilot.app.query_one(MarkdownEditor)
+        editor.focus()
+        editor.load_text("hello world")
+        await pilot.pause()
+        editor.selection = editor.selection.__class__((0, 0), (0, 5))
+        await pilot.press("alt+b")
+        await pilot.pause()
+        assert "**hello**" in editor.text
+
+
+@pytest.mark.asyncio
+async def test_tab_no_longer_toggles_italic():
+    """Regression test: Tab used to alias ctrl+i (italic) on many terminals.
+    After the alt+b/alt+i rebind, Tab must be a no-op for the editor text
+    (it moves focus instead)."""
+    async with EditorApp().run_test() as pilot:
+        editor = pilot.app.query_one(MarkdownEditor)
+        editor.focus()
+        editor.load_text("hello world")
+        await pilot.pause()
+        editor.selection = editor.selection.__class__((0, 0), (0, 5))
+        before = editor.text
+        await pilot.press("tab")
+        await pilot.pause()
+        assert editor.text == before
+        assert "*hello*" not in editor.text
+
+
+@pytest.mark.asyncio
 async def test_open_file_does_not_post_modified(tmp_path):
     """open_file() must not post a Modified message even though TextArea.Changed fires."""
     md_file = tmp_path / "no_modified.md"

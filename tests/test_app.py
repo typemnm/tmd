@@ -3,8 +3,9 @@ import asyncio
 import urllib.request
 
 import pytest
+from textual.widgets import Input
 
-from tmd_cli.app import StatusBar, TmdApp
+from tmd_cli.app import PathDialog, StatusBar, TmdApp
 from tmd_cli.editor import MarkdownEditor
 from tmd_cli.sidebar import Sidebar
 
@@ -128,6 +129,33 @@ async def test_typing_publishes_to_preview_after_debounce(monkeypatch, tmp_path)
 
         assert published
         assert published[-1] == "hello!"
+
+
+@pytest.mark.asyncio
+async def test_find_dialog_has_no_path_suggester():
+    """Ctrl+F's search dialog must not get path autocomplete — accepting a
+    ghost-text suggestion there would silently replace the search query."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        assert path_input.suggester is None
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_open_file_dialog_has_path_suggester():
+    """Ctrl+O's file-open dialog should keep its path autocomplete."""
+    async with TmdApp().run_test(size=(120, 40)) as pilot:
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        dialog = pilot.app.screen
+        assert isinstance(dialog, PathDialog)
+        path_input = dialog.query_one("#path", Input)
+        assert path_input.suggester is not None
+        await pilot.press("escape")
 
 
 @pytest.mark.asyncio
