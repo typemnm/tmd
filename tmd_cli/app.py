@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 
@@ -17,6 +19,45 @@ from tmd_cli.preview import PreviewServer
 from tmd_cli.sidebar import Sidebar
 
 _PREVIEW_DEBOUNCE = 0.2  # seconds
+
+
+class PathSuggester(Suggester):
+    """Inline path completion for PathDialog's Input.
+
+    Receives the raw (non-casefolded) value so the already-typed portion of
+    the suggestion keeps the user's exact casing; matching itself is done
+    case-insensitively against the real directory entries.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(case_sensitive=True, use_cache=False)
+
+    async def get_suggestion(self, value: str) -> str | None:
+        if not value:
+            return None
+        raw = Path(value).expanduser()
+        if value.endswith("/"):
+            parent = raw
+            prefix = ""
+        else:
+            parent = raw.parent
+            prefix = raw.name
+        try:
+            entries = await asyncio.to_thread(lambda: sorted(parent.iterdir()))
+        except OSError:
+            return None
+        needle = prefix.casefold()
+        for entry in entries:
+            if entry.name.casefold().startswith(needle):
+                suggestion_path = parent / entry.name
+                is_dir = await asyncio.to_thread(suggestion_path.is_dir)
+                suggestion = str(suggestion_path) + ("/" if is_dir else "")
+                if value.startswith("~"):
+                    home = str(Path.home())
+                    if suggestion.startswith(home):
+                        suggestion = "~" + suggestion[len(home):]
+                return suggestion
+        return None
 
 
 class PathDialog(ModalScreen[str | None]):
@@ -44,7 +85,12 @@ class PathDialog(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(self._title)
-            yield Input(value=self._value, placeholder=self._placeholder, id="path")
+            yield Input(
+                value=self._value,
+                placeholder=self._placeholder,
+                suggester=PathSuggester(),
+                id="path",
+            )
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
