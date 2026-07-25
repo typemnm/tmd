@@ -67,12 +67,20 @@ class MarkdownEditor(TextArea):
     # parser hard-codes the ESC-b byte sequence to "ctrl+left" (cursor word
     # left) on terminals without the Kitty keyboard protocol, so a
     # Binding("alt+b", ...) would silently never fire there either. Alt+G
-    # and Alt+I are not shadowed by any such hard-coded legacy mapping, so
-    # bold/italic use those instead.
+    # and Alt+I are not shadowed by any such hard-coded legacy mapping, but
+    # they still need priority=True: on those same legacy terminals, an
+    # Alt+letter keystroke is reported as a Key event with a printable
+    # `character` set (e.g. Alt+G -> character="g"), and TextArea's own key
+    # handling treats any printable character as literal text input,
+    # inserting it and calling event.stop()/prevent_default() before the
+    # event ever reaches normal (non-priority) binding resolution. Marking
+    # these two bindings priority=True makes Textual check them ahead of the
+    # focused widget's own key handling, so they fire correctly instead of
+    # destroying the selection and inserting a literal "g"/"i".
     BINDINGS = [
         Binding("ctrl+s", "save", "저장"),
-        Binding("alt+g", "toggle_bold", "굵게"),
-        Binding("alt+i", "toggle_italic", "기울임"),
+        Binding("alt+g", "toggle_bold", "굵게", priority=True),
+        Binding("alt+i", "toggle_italic", "기울임", priority=True),
     ]
 
     class Saved(Message):

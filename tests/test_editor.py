@@ -1,5 +1,6 @@
 
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 
 from tmd_cli.editor import MarkdownEditor
@@ -161,6 +162,61 @@ async def test_alt_i_toggles_italic_via_keypress():
         await pilot.press("alt+i")
         await pilot.pause()
         assert "*hello*" in editor.text
+
+
+async def _send_legacy_terminal_alt_key(pilot, key: str, character: str) -> None:
+    """Dispatch a Key event the way a real terminal's legacy ANSI parser
+    would for an Alt+<letter> keystroke — with `character` explicitly set.
+
+    `pilot.press()` cannot reproduce this: Textual's own `_press_keys` only
+    sets `character` for single-character key names, so for a multi-char
+    name like "alt+g" it synthesizes `character=None`. That gap is exactly
+    why the priority=True regression above survived Pilot-based tests: real
+    terminals report `Key(key="alt+g", character="g")`, and without
+    priority=True, TextArea's own key handling swallows any printable
+    character as literal text before normal bindings are ever consulted.
+
+    This helper goes through the same path a real driver uses
+    (`driver.send_message` -> `App._post_message` -> `App.on_event`), so it
+    also exercises the priority-binding check in `App.on_event`, not just
+    the widget's action method.
+    """
+    app = pilot.app
+    driver = app._driver
+    assert driver is not None
+    key_event = events.Key(key, character)
+    key_event.set_sender(app)
+    driver.send_message(key_event)
+    await pilot.pause()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "character", "wrapped"),
+    [
+        ("alt+g", "g", "**hello**"),
+        ("alt+i", "i", "*hello*"),
+    ],
+)
+async def test_alt_key_toggles_formatting_on_legacy_terminal(key, character, wrapped):
+    """Regression test: on a real terminal without the Kitty keyboard
+    protocol, Alt+G/Alt+I key events carry a printable `character` field.
+    Without priority=True on these bindings, TextArea's own key handling
+    would consume that character as literal text input (destroying the
+    selection and inserting "g"/"i") before the binding is ever considered.
+    This must actually toggle bold/italic instead."""
+    async with EditorApp().run_test() as pilot:
+        editor = pilot.app.query_one(MarkdownEditor)
+        editor.focus()
+        editor.load_text("hello world")
+        await pilot.pause()
+        editor.selection = editor.selection.__class__((0, 0), (0, 5))
+        await _send_legacy_terminal_alt_key(pilot, key, character)
+        assert wrapped in editor.text
+        # The literal character must NOT have been inserted as plain text
+        # in place of the selection (the pre-fix, buggy behavior).
+        assert editor.text.count(character) == wrapped.count(character)
 
 
 @pytest.mark.asyncio
