@@ -399,7 +399,7 @@ class TmdApp(App):
 
     def action_show_help(self) -> None:
         self.notify(
-            "Ctrl+S: Save | Ctrl+Q: Quit | Alt+B: Bold | Alt+I: Italic"
+            "Ctrl+S: Save | Ctrl+Q: Quit | Alt+G: Bold | Alt+I: Italic"
             " | Ctrl+Shift+S: Save As | Ctrl+N: New"
             " | Ctrl+F: Find | Ctrl+\\: Toggle Sidebar | Ctrl+P: 미리보기 | F1: Help",
             title="tmd Keyboard Shortcuts",
@@ -542,7 +542,10 @@ def main() -> None:
     root: str | None = None
 
     if args.path:
-        p = Path(args.path).expanduser().resolve()
+        try:
+            p = Path(args.path).expanduser().resolve()
+        except (OSError, ValueError, RuntimeError):
+            parser.error(f"File or directory not found: {args.path}")
         if p.is_dir():
             root = str(p)
         elif p.is_file():

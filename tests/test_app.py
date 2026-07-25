@@ -5,7 +5,7 @@ import urllib.request
 import pytest
 from textual.widgets import Input
 
-from tmd_cli.app import PathDialog, StatusBar, TmdApp
+from tmd_cli.app import PathDialog, StatusBar, TmdApp, main
 from tmd_cli.editor import MarkdownEditor
 from tmd_cli.sidebar import Sidebar
 
@@ -201,6 +201,24 @@ async def test_save_as_enter_with_unresolvable_tilde_user_does_not_crash():
         assert any(
             n.severity == "error" for n in pilot.app._notifications
         )
+
+
+def test_main_with_unresolvable_tilde_user_path_exits_cleanly(monkeypatch, capsys):
+    """main()'s CLI argument path is the last unguarded spot with this crash
+    class: Path(args.path).expanduser().resolve() raises RuntimeError for an
+    unresolvable "~someuser" token (no matching passwd entry), the same
+    mechanism PathSuggester and the open/save-as dialogs were hardened
+    against. It must be caught and turned into the same clean
+    parser.error(...) used for the "neither file nor directory" case, not
+    let propagate as a raw traceback."""
+    monkeypatch.setattr(
+        "sys.argv", ["tmd", "~this-user-does-not-exist-xyz/out.md"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "File or directory not found" in captured.err
 
 
 @pytest.mark.asyncio

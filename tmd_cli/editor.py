@@ -63,11 +63,15 @@ class MarkdownEditor(TextArea):
     # across terminals (it only fires on terminals that opt into Kitty-style
     # key disambiguation, e.g. kitty, ghostty, WezTerm, foot). Ctrl+B is
     # tmux's default prefix key — it would silently fail to reach the editor
-    # in common setups. Alt+B/Alt+I work consistently across both legacy and
-    # Kitty-protocol terminals, so bold/italic use Alt instead.
+    # in common setups. Alt+B was also ruled out: Textual's legacy ANSI
+    # parser hard-codes the ESC-b byte sequence to "ctrl+left" (cursor word
+    # left) on terminals without the Kitty keyboard protocol, so a
+    # Binding("alt+b", ...) would silently never fire there either. Alt+G
+    # and Alt+I are not shadowed by any such hard-coded legacy mapping, so
+    # bold/italic use those instead.
     BINDINGS = [
         Binding("ctrl+s", "save", "저장"),
-        Binding("alt+b", "toggle_bold", "굵게"),
+        Binding("alt+g", "toggle_bold", "굵게"),
         Binding("alt+i", "toggle_italic", "기울임"),
     ]
 

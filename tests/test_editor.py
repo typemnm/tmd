@@ -93,19 +93,25 @@ async def test_modified_message_posted(tmp_path):
 
 @pytest.mark.asyncio
 async def test_bindings_present():
-    """BINDINGS must include ctrl+s, alt+b, alt+i, and must NOT include the
-    old ctrl+b/ctrl+i bindings. ctrl+i is unreachable in practice (every
-    terminal reports that keystroke as "tab", which Textual's BINDINGS
-    matching treats as a plain, literal "tab" event — never "ctrl+i"), and
-    ctrl+b collides with tmux's default prefix key, so bold/italic use Alt
-    instead. This is a code-level regression lock: it fails if the old
-    bindings are ever re-added."""
+    """BINDINGS must include ctrl+s, alt+g, alt+i, and must NOT include the
+    old ctrl+b/ctrl+i/alt+b bindings. On terminals without the Kitty
+    keyboard protocol (most terminals), ctrl+i is unreachable because that
+    keystroke is reported as "tab", which Textual's BINDINGS matching
+    treats as a plain, literal "tab" event — never "ctrl+i" — and ctrl+b
+    collides with tmux's default prefix key. alt+b was also tried and
+    dropped: Textual's legacy ANSI parser hard-codes that byte sequence to
+    "ctrl+left" on terminals without the Kitty protocol, so the binding
+    never fired there either. bold/italic use alt+g/alt+i instead, neither
+    of which is shadowed by a hard-coded legacy mapping. This is a
+    code-level regression lock: it fails if the old bindings are ever
+    re-added."""
     binding_keys = {b.key for b in MarkdownEditor.BINDINGS}
     assert "ctrl+s" in binding_keys
-    assert "alt+b" in binding_keys
+    assert "alt+g" in binding_keys
     assert "alt+i" in binding_keys
     assert "ctrl+b" not in binding_keys
     assert "ctrl+i" not in binding_keys
+    assert "alt+b" not in binding_keys
 
 
 @pytest.mark.asyncio
@@ -126,8 +132,8 @@ async def test_annotate_line_applied(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_alt_b_toggles_bold_via_keypress():
-    """Pressing alt+b with a selection wraps it in ** (the actual key path,
+async def test_alt_g_toggles_bold_via_keypress():
+    """Pressing alt+g with a selection wraps it in ** (the actual key path,
     not just action_toggle_bold called directly)."""
     async with EditorApp().run_test() as pilot:
         editor = pilot.app.query_one(MarkdownEditor)
@@ -135,7 +141,7 @@ async def test_alt_b_toggles_bold_via_keypress():
         editor.load_text("hello world")
         await pilot.pause()
         editor.selection = editor.selection.__class__((0, 0), (0, 5))
-        await pilot.press("alt+b")
+        await pilot.press("alt+g")
         await pilot.pause()
         assert "**hello**" in editor.text
 
@@ -144,8 +150,8 @@ async def test_alt_b_toggles_bold_via_keypress():
 async def test_alt_i_toggles_italic_via_keypress():
     """Pressing alt+i with a selection wraps it in * (the actual key path,
     not just action_toggle_italic called directly) — the real keyboard
-    shortcut for italic now that ctrl+i can never fire (see
-    test_bindings_present)."""
+    shortcut for italic now that ctrl+i is unreachable on terminals without
+    the Kitty keyboard protocol (see test_bindings_present)."""
     async with EditorApp().run_test() as pilot:
         editor = pilot.app.query_one(MarkdownEditor)
         editor.focus()
