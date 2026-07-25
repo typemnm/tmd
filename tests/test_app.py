@@ -1,5 +1,6 @@
 
 import asyncio
+import subprocess
 import urllib.request
 
 import pytest
@@ -93,6 +94,8 @@ async def test_modified_updates_status_bar(tmp_path):
 
 @pytest.mark.asyncio
 async def test_action_toggle_preview(monkeypatch, tmp_path):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
     monkeypatch.setattr("tmd_cli.app.webbrowser.open", lambda url: None)
     md = tmp_path / "p.md"
     md.write_text("# Hi", encoding="utf-8")
@@ -109,6 +112,8 @@ async def test_action_toggle_preview(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_typing_publishes_to_preview_after_debounce(monkeypatch, tmp_path):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
     monkeypatch.setattr("tmd_cli.app.webbrowser.open", lambda url: None)
     md = tmp_path / "p.md"
     md.write_text("hello", encoding="utf-8")
@@ -223,6 +228,8 @@ def test_main_with_unresolvable_tilde_user_path_exits_cleanly(monkeypatch, capsy
 
 @pytest.mark.asyncio
 async def test_preview_stops_on_unmount(monkeypatch, tmp_path):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
     monkeypatch.setattr("tmd_cli.app.webbrowser.open", lambda url: None)
     md = tmp_path / "p.md"
     md.write_text("# Hi", encoding="utf-8")
@@ -236,3 +243,65 @@ async def test_preview_stops_on_unmount(monkeypatch, tmp_path):
     # After the app context exits, App.on_unmount must have stopped the server.
     with pytest.raises(OSError):
         urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1)
+
+
+def test_open_browser_uses_cmd_exe_on_wsl(monkeypatch):
+    """On WSL, webbrowser.open() delegates to xdg-open/wslview, which on
+    some WSL builds silently no-op (they probe
+    /proc/sys/fs/binfmt_misc/WSLInterop, but some WSL2 kernels only expose
+    WSLInterop-late) -- exit 0, report success, but never actually open a
+    browser. cmd.exe's own `start` reaches the Windows default browser
+    directly without depending on those scripts, so it must be preferred
+    whenever we can detect WSL and locate cmd.exe."""
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
+    monkeypatch.setattr(
+        "tmd_cli.app.shutil.which",
+        lambda name: "/mnt/c/WINDOWS/system32/cmd.exe" if name == "cmd.exe" else None,
+    )
+    calls: list[tuple[list[str], dict]] = []
+    monkeypatch.setattr(
+        "tmd_cli.app.subprocess.Popen",
+        lambda args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    def _fail_if_called(url: str) -> None:
+        raise AssertionError("webbrowser.open must not be used on WSL when cmd.exe is available")
+
+    monkeypatch.setattr("tmd_cli.app.webbrowser.open", _fail_if_called)
+
+    from tmd_cli.app import _open_browser
+
+    _open_browser("http://127.0.0.1:12345/")
+
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ["/mnt/c/WINDOWS/system32/cmd.exe", "/c", "start", "", "http://127.0.0.1:12345/"]
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
+
+
+def test_open_browser_falls_back_to_webbrowser_when_not_wsl(monkeypatch):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
+    opened: list[str] = []
+    monkeypatch.setattr("tmd_cli.app.webbrowser.open", opened.append)
+
+    from tmd_cli.app import _open_browser
+
+    _open_browser("http://127.0.0.1:12345/")
+
+    assert opened == ["http://127.0.0.1:12345/"]
+
+
+def test_open_browser_falls_back_when_cmd_exe_missing_on_wsl(monkeypatch):
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    monkeypatch.setattr("tmd_cli.app.shutil.which", lambda name: None)
+    opened: list[str] = []
+    monkeypatch.setattr("tmd_cli.app.webbrowser.open", opened.append)
+
+    from tmd_cli.app import _open_browser
+
+    _open_browser("http://127.0.0.1:12345/")
+
+    assert opened == ["http://127.0.0.1:12345/"]

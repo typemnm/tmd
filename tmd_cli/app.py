@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import shutil
+import subprocess
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -19,6 +22,30 @@ from tmd_cli.preview import PreviewServer
 from tmd_cli.sidebar import Sidebar
 
 _PREVIEW_DEBOUNCE = 0.2  # seconds
+
+
+def _open_browser(url: str) -> None:
+    """Open *url* in the user's default browser.
+
+    On WSL, webbrowser.open() delegates to xdg-open/wslview, and on some
+    WSL builds those scripts probe /proc/sys/fs/binfmt_misc/WSLInterop to
+    detect WSL -- but some WSL2 kernels only expose WSLInterop-late, so the
+    probe fails, the script silently no-ops, and nothing ever opens even
+    though the subprocess exits 0 (reported success). cmd.exe's own `start`
+    reaches the Windows default browser directly without depending on
+    those scripts, so prefer it whenever WSL is detected and cmd.exe can
+    be found.
+    """
+    if "WSL_DISTRO_NAME" in os.environ or "WSL_INTEROP" in os.environ:
+        cmd_exe = shutil.which("cmd.exe")
+        if cmd_exe:
+            subprocess.Popen(
+                [cmd_exe, "/c", "start", "", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+    webbrowser.open(url)
 
 
 class PathSuggester(Suggester):
@@ -336,7 +363,7 @@ class TmdApp(App):
                 )
                 return
             self._preview = preview
-            webbrowser.open(url)
+            _open_browser(url)
             self.query_one(StatusBar).set_preview_url(url)
             self.notify(f"미리보기 시작: {url}", timeout=6)
         else:
