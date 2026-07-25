@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import html
+import queue
+import threading
+from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from markdown_it import MarkdownIt
 from mdit_py_plugins.tasklists import tasklists_plugin
@@ -79,3 +83,123 @@ source.onmessage = (event) => {{
 </body>
 </html>
 """
+
+
+def _format_sse_event(data: str) -> bytes:
+    """Encode *data* as a single SSE event, preserving embedded newlines."""
+    payload = "\n".join(f"data: {line}" for line in data.split("\n"))
+    return f"{payload}\n\n".encode()
+
+
+class _PreviewHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, server_address, handler_cls, get_text, title) -> None:
+        super().__init__(server_address, handler_cls)
+        self.get_text: Callable[[], str] = get_text
+        self.title = title
+        self.clients: list[queue.Queue[str | None]] = []
+        self.clients_lock = threading.Lock()
+
+    def add_client(self, client_queue: queue.Queue[str | None]) -> None:
+        with self.clients_lock:
+            self.clients.append(client_queue)
+
+    def remove_client(self, client_queue: queue.Queue[str | None]) -> None:
+        with self.clients_lock:
+            if client_queue in self.clients:
+                self.clients.remove(client_queue)
+
+    def publish(self, text: str) -> None:
+        fragment = render_fragment(text)
+        with self.clients_lock:
+            clients = list(self.clients)
+        for client_queue in clients:
+            client_queue.put(fragment)
+
+    def close_all_clients(self) -> None:
+        with self.clients_lock:
+            clients = list(self.clients)
+        for client_queue in clients:
+            client_queue.put(None)
+
+
+class _PreviewHandler(BaseHTTPRequestHandler):
+    server: _PreviewHTTPServer
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
+        pass  # silence default access logging to stdout
+
+    def do_GET(self) -> None:
+        if self.path == "/":
+            self._serve_index()
+        elif self.path == "/events":
+            self._serve_events()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def _serve_index(self) -> None:
+        body = render_page(self.server.get_text(), self.server.title).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_events(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        client_queue: queue.Queue[str | None] = queue.Queue()
+        self.server.add_client(client_queue)
+        try:
+            while True:
+                fragment = client_queue.get()
+                if fragment is None:
+                    break
+                self.wfile.write(_format_sse_event(fragment))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            self.server.remove_client(client_queue)
+
+
+class PreviewServer:
+    """Read-only, live-updating HTML preview of a single Markdown buffer."""
+
+    def __init__(self, get_text: Callable[[], str], title: str = "tmd preview") -> None:
+        self._get_text = get_text
+        self._title = title
+        self._httpd: _PreviewHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> str:
+        self._httpd = _PreviewHTTPServer(
+            ("127.0.0.1", 0), _PreviewHandler, self._get_text, self._title
+        )
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        port = self._httpd.server_address[1]
+        return f"http://127.0.0.1:{port}/"
+
+    def publish(self, text: str) -> None:
+        if self._httpd is not None:
+            self._httpd.publish(text)
+
+    @property
+    def last_port(self) -> int | None:
+        return None if self._httpd is None else self._httpd.server_address[1]
+
+    def stop(self) -> None:
+        if self._httpd is not None:
+            self._httpd.close_all_clients()
+            self._httpd.shutdown()
+            self._httpd.server_close()
+            self._httpd = None
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None

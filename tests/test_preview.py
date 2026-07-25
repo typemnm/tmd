@@ -1,4 +1,9 @@
-from tmd_cli.preview import render_fragment, render_page
+import time
+import urllib.request
+
+import pytest
+
+from tmd_cli.preview import PreviewServer, render_fragment, render_page
 
 
 def test_render_fragment_heading_and_emphasis():
@@ -44,3 +49,52 @@ def test_render_page_embeds_fragment_and_title():
 def test_render_page_escapes_title():
     page = render_page("text", title="<b>evil</b>")
     assert "<title>&lt;b&gt;evil&lt;/b&gt;</title>" in page
+
+
+def _wait_for_clients(server: PreviewServer, count: int = 1, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if len(server._httpd.clients) >= count:  # noqa: SLF001 - test-only introspection
+            return
+        time.sleep(0.01)
+    raise AssertionError("timed out waiting for SSE client to register")
+
+
+def test_preview_server_serves_index():
+    server = PreviewServer(get_text=lambda: "# Hi", title="hi.md")
+    url = server.start()
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            assert response.status == 200
+            body = response.read().decode("utf-8")
+            assert "<h1>Hi</h1>" in body
+            assert "<title>hi.md</title>" in body
+    finally:
+        server.stop()
+
+
+def test_preview_server_pushes_updates_over_sse():
+    state = {"text": "first"}
+    server = PreviewServer(get_text=lambda: state["text"])
+    url = server.start()
+    try:
+        events = urllib.request.urlopen(url + "events", timeout=5)
+        try:
+            _wait_for_clients(server)
+            state["text"] = "second"
+            server.publish(state["text"])
+            line = events.readline().decode("utf-8")
+            assert line.startswith("data: ")
+            assert "second" in line
+        finally:
+            events.close()
+    finally:
+        server.stop()
+
+
+def test_preview_server_stop_releases_port():
+    server = PreviewServer(get_text=lambda: "")
+    url = server.start()
+    server.stop()
+    with pytest.raises(OSError):
+        urllib.request.urlopen(url, timeout=1)
